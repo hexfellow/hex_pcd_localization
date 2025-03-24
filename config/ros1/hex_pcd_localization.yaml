@@ -1,0 +1,28 @@
+# flag
+flag_auto_start: true
+flag_pure_lidar: false
+
+# frame
+frame_map: "map"
+frame_odom: "odom"
+frame_sensor: "rslidar"
+
+# init
+init_position: [0.0, 0.0, 0.0]
+init_orientation: [1.0, 0.0, 0.0, 0.0]
+
+# ndt
+ndt_trans_epsilon: 0.05
+ndt_step_size: 0.1
+ndt_resolution: 2.0
+ndt_max_iterations: 30
+
+# source
+source_voxel_size: 0.5
+source_fov: [-3.14, 3.14]
+source_distance: [0.5, 50.0]
+
+# target
+target_voxel_size: 0.4
+target_pcd_size: 80.0
+target_update_distance: 30.0

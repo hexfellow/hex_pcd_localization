@@ -1,10 +1,10 @@
 /****************************************************************
  * Copyright 2023 Dong Zhaorui. All rights reserved.
  * Author : Dong Zhaorui 847235539@qq.com
- * Date   : 2023-08-29
+ * Date   : 2023-11-21
  ****************************************************************/
 
-#include "pcd_localization/pcd_localization.h"
+#include "hex_pcd_localization/pcd_localization.h"
 
 #include <pcl/filters/crop_box.h>
 #include <pcl/filters/voxel_grid.h>
@@ -15,58 +15,47 @@
 #include <chrono>
 #include <vector>
 
-#include "pcd_localization/data_interface.h"
+#include "hex_pcd_localization/data_interface/data_interface.h"
 
 namespace hex {
 namespace localization {
 
 bool PcdLocalization::Init() {
-  static DataInterface& data_interface = DataInterface::GetDataInterface();
+  static DataInterface& data_interface = DataInterface::GetSingleton();
   static bool first_init_flag = true;
 
   if (first_init_flag) {
     first_init_flag = false;
 
     // parameters
-    kmap_frame_ = data_interface.GetMapFrame();
-    kodom_frame_ = data_interface.GetOdomFrame();
-    ktarget_voxel_size_ = data_interface.GetTargetVoxelSize();
-    ktarget_pcd_size_ = data_interface.GetTargetPcdSize();
-    ktarget_update_distance_ = data_interface.GetTargetUpdateDistance();
-    ksource_voxel_size_ = data_interface.GetSourceVoxelSize();
-    ksource_max_range_ = data_interface.GetSourceMaxRange();
-    ksource_min_range_ = data_interface.GetSourceMinRange();
-    ksource_max_angle_ = data_interface.GetSourceMaxAngle();
-    ksource_min_angle_ = data_interface.GetSourceMinAngle();
-    kndt_trans_epsilon_ = data_interface.GetNdtTransEpsilon();
-    kndt_step_size_ = data_interface.GetNdtStepSize();
-    kndt_resolution_ = data_interface.GetNdtResolution();
-    kndt_max_iterations_ = data_interface.GetNdtMaxIterations();
-    kmode_pure_lidar_ = data_interface.GetModePureLidar();
+    kparameters_flag_ = data_interface.GetParametersFlag();
+    kparameters_frame_ = data_interface.GetParametersFrame();
+    kparameters_ndt_ = data_interface.GetParametersNdt();
+    kparameters_source_ = data_interface.GetParametersSource();
+    kparameters_target_ = data_interface.GetParametersTarget();
 
     // transform
-    Eigen::Affine3f init_affine =
-        HexTransToAffine(data_interface.GetInitTrans());
+    Eigen::Affine3f init_affine = data_interface.GetInit().transform;
     map_center_ = init_affine.translation();
     last_trans_ = init_affine;
-    map_to_sensor_ = init_affine;
+    sensor_in_map_ = init_affine;
     delta_trans_ = Eigen::Affine3f::Identity();
-    map_to_odom_ = Eigen::Affine3f::Identity();
+    odom_in_map_ = Eigen::Affine3f::Identity();
 
     // point cloud
     map_points_ = pcl::PointCloud<pcl::PointXYZ>::Ptr(
         new pcl::PointCloud<pcl::PointXYZ>());
-    if (pcl::io::loadPCDFile<pcl::PointXYZ>(data_interface.GetMapPath().c_str(),
-                                            *map_points_) == -1) {
+    if (pcl::io::loadPCDFile<pcl::PointXYZ>(
+            kparameters_target_.map_path.c_str(), *map_points_) == -1) {
       first_init_flag = true;
-      data_interface.Log(LogLevel::kError, "### Load Map Failed ###");
+      data_interface.Log(HexLogLevel::kError, "### Load Map Failed ###");
       return false;
     }
-    map_points_ = DownSample(map_points_, ktarget_voxel_size_);
+    map_points_ = DownSample(map_points_, kparameters_target_.voxel_size);
     data_interface.PublishMapPoints(map_points_);
-    data_interface.Log(LogLevel::kInfo, "### Load Map Finished ###");
+    data_interface.Log(HexLogLevel::kInfo, "### Load Map Finished ###");
 
-    if (data_interface.GetModeAutoStart()) {
+    if (kparameters_flag_.auto_start) {
       start_flag_ = true;
       UpdateTarget();
     } else {
@@ -75,60 +64,62 @@ bool PcdLocalization::Init() {
   } else {
     start_flag_ = false;
 
-    data_interface.Log(LogLevel::kInfo, "### Wait For New Init Trans ###");
+    data_interface.Log(HexLogLevel::kInfo, "### Wait For New Init Trans ###");
   }
 
   return true;
 }
 
 bool PcdLocalization::Work() {
-  static DataInterface& data_interface = DataInterface::GetDataInterface();
+  static DataInterface& data_interface = DataInterface::GetSingleton();
   // tf
-  Eigen::Affine3f odom_to_sensor =
-      HexTransToAffine(data_interface.ListenFrameToSensor(kodom_frame_));
+  Eigen::Affine3f sensor_in_odom =
+      data_interface.ListenFrameToSensor(kparameters_frame_.odom).transform;
 
   // get rough transformation
-  if (data_interface.GetInitTransFlag()) {
-    data_interface.ResetInitTransFlag();
+  if (data_interface.GetInitFlag()) {
+    data_interface.ResetInitFlag();
 
-    map_to_sensor_ = HexTransToAffine(data_interface.GetInitTrans());
-    map_center_ = map_to_sensor_.translation();
+    sensor_in_map_ = data_interface.GetInit().transform;
+    map_center_ = sensor_in_map_.translation();
     UpdateTarget();
 
-    if (kmode_pure_lidar_) {
-      last_trans_ = map_to_sensor_;
+    if (kparameters_flag_.pure_lidar) {
+      last_trans_ = sensor_in_map_;
       delta_trans_ = Eigen::Affine3f::Identity();
     }
 
     start_flag_ = true;
-  } else if (kmode_pure_lidar_) {
-    map_to_sensor_ = last_trans_ * delta_trans_;
+
+    data_interface.Log(HexLogLevel::kInfo, "### Get Init Trans ###");
+  } else if (kparameters_flag_.pure_lidar) {
+    sensor_in_map_ = last_trans_ * delta_trans_;
   } else {
-    map_to_sensor_ = map_to_odom_ * odom_to_sensor;
+    sensor_in_map_ = odom_in_map_ * sensor_in_odom;
   }
 
   if (start_flag_) {
     // update map
-    if ((map_center_ - map_to_sensor_.translation()).norm() >
-        ktarget_update_distance_) {
+    if ((map_center_ - sensor_in_map_.translation()).norm() >
+        kparameters_target_.update_distance) {
       // target
-      map_center_ = map_to_sensor_.translation();
+      map_center_ = sensor_in_map_.translation();
       UpdateTarget();
     }
 
     // pcd alignment
-    if (data_interface.GetLidarCloudFlag()) {
-      HexPointsStamped sensor_points = data_interface.GetLidarCloud();
-      HexTransStamped fine_map_to_sensor =
-          PointsAlignment(map_to_sensor_, sensor_points);
+    if (data_interface.GetLidarFlag()) {
+      HexStampedPoints sensor_points = data_interface.GetLidar();
+      HexStampedTrans fine_sensor_in_map =
+          PointsAlignment(sensor_in_map_, sensor_points);
 
-      if (fabs(fine_map_to_sensor.time - sensor_points.time) > 1.0) {
-        data_interface.Log(LogLevel::kError, "### Diverge ###");
+      if (fabs(fine_sensor_in_map.time - sensor_points.time) > 1.0) {
+        data_interface.Log(HexLogLevel::kError, "### Diverge ###");
         return false;
       }
-      ResultProcess(fine_map_to_sensor, odom_to_sensor);
+      ResultProcess(fine_sensor_in_map, sensor_in_odom);
 
-      data_interface.ResetLidarCloudFlag();
+      data_interface.ResetLidarFlag();
     }
   }
 
@@ -136,69 +127,72 @@ bool PcdLocalization::Work() {
 }
 
 void PcdLocalization::UpdateTarget() {
-  static DataInterface& data_interface = DataInterface::GetDataInterface();
+  static DataInterface& data_interface = DataInterface::GetSingleton();
 
   pcl::NormalDistributionsTransform<pcl::PointXYZ, pcl::PointXYZ> ndt_new;
-  ndt_new.setTransformationEpsilon(kndt_trans_epsilon_);
-  ndt_new.setStepSize(kndt_step_size_);
-  ndt_new.setResolution(kndt_resolution_);
-  ndt_new.setMaximumIterations(kndt_max_iterations_);
+  ndt_new.setTransformationEpsilon(kparameters_ndt_.trans_epsilon);
+  ndt_new.setStepSize(kparameters_ndt_.step_size);
+  ndt_new.setResolution(kparameters_ndt_.resolution);
+  ndt_new.setMaximumIterations(kparameters_ndt_.max_iterations);
 
-  pcl::PointCloud<pcl::PointXYZ>::Ptr target_points =
-      CropPointsBox(map_points_, ktarget_pcd_size_, ktarget_pcd_size_,
-                    ktarget_pcd_size_, map_center_);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr target_points = CropPointsBox(
+      map_points_, kparameters_target_.pcd_size, kparameters_target_.pcd_size,
+      kparameters_target_.pcd_size, map_center_);
   ndt_new.setInputTarget(target_points);
   // data_interface.PublishDebugPoints(target_points, kmap_frame_);
 
   ndt_register_ = ndt_new;
 }
 
-const HexTransStamped& PcdLocalization::PointsAlignment(
-    const Eigen::Affine3f& rough_map_to_sensor,
-    const HexPointsStamped& sensor_points_stamped) {
-  static HexTransStamped fine_map_to_sensor;
-  static DataInterface& data_interface = DataInterface::GetDataInterface();
+const HexStampedTrans& PcdLocalization::PointsAlignment(
+    const Eigen::Affine3f& rough_sensor_in_map,
+    const HexStampedPoints& sensor_points_stamped) {
+  static HexStampedTrans fine_sensor_in_map;
+  static DataInterface& data_interface = DataInterface::GetSingleton();
 
   // source
   pcl::PointCloud<pcl::PointXYZ>::Ptr source_points = CropPointsCylinder(
-      sensor_points_stamped.points, ksource_min_range_, ksource_max_range_,
-      ksource_min_angle_, ksource_max_angle_);
-  source_points = DownSample(source_points, ksource_voxel_size_);
+      sensor_points_stamped.points, kparameters_source_.distance_threshold[0],
+      kparameters_source_.distance_threshold[1],
+      kparameters_source_.fov_threshold[0],
+      kparameters_source_.fov_threshold[1]);
+  source_points = DownSample(source_points, kparameters_source_.voxel_size);
   // data_interface.PublishDebugPoints(source_points, "base_link");
 
   // alignment
-  fine_map_to_sensor = NdtAlignment(rough_map_to_sensor, source_points,
+  fine_sensor_in_map = NdtAlignment(rough_sensor_in_map, source_points,
                                     sensor_points_stamped.time);
 
-  // fine_map_to_sensor =
-  //     DoubleIcpAlignment(rough_map_to_sensor, target_points, source_points,
+  // fine_sensor_in_map =
+  //     DoubleIcpAlignment(rough_sensor_in_map, target_points, source_points,
   //     sensor_points_stamped.time);
 
-  return fine_map_to_sensor;
+  return fine_sensor_in_map;
 }
 
-void PcdLocalization::ResultProcess(const HexTransStamped& fine_map_to_sensor,
-                                    const Eigen::Affine3f& odom_to_sensor) {
-  static DataInterface& data_interface = DataInterface::GetDataInterface();
-  map_to_sensor_ = HexTransToAffine(fine_map_to_sensor);
+void PcdLocalization::ResultProcess(const HexStampedTrans& fine_sensor_in_map,
+                                    const Eigen::Affine3f& sensor_in_odom) {
+  static DataInterface& data_interface = DataInterface::GetSingleton();
+  sensor_in_map_ = fine_sensor_in_map.transform;
 
-  if (kmode_pure_lidar_) {
-    delta_trans_ = last_trans_.inverse() * map_to_sensor_;
-    last_trans_ = map_to_sensor_;
+  if (kparameters_flag_.pure_lidar) {
+    delta_trans_ = last_trans_.inverse() * sensor_in_map_;
+    last_trans_ = sensor_in_map_;
   }
 
-  map_to_odom_ = map_to_sensor_ * odom_to_sensor.inverse();
+  odom_in_map_ = sensor_in_map_ * sensor_in_odom.inverse();
   // std::cout << "map to sensor: " << std::endl
-  //           << map_to_sensor_.matrix() << std::endl;
-  data_interface.BroadcastMapToOdom(map_to_odom_, fine_map_to_sensor.time);
-  data_interface.PublishSensorTrans(fine_map_to_sensor);
+  //           << sensor_in_map_.matrix() << std::endl;
+  data_interface.BroadcastMapToOdom(odom_in_map_, fine_sensor_in_map.time);
+  data_interface.PublishSensorTrans(fine_sensor_in_map);
 }
 
-const HexTransStamped& PcdLocalization::NdtAlignment(
+const HexStampedTrans& PcdLocalization::NdtAlignment(
     const Eigen::Affine3f& init_guess,
     const pcl::PointCloud<pcl::PointXYZ>::Ptr& source_points,
-    double valid_time) {
-  static HexTransStamped final_trans;
+    HexStamp valid_time) {
+  static DataInterface& data_interface = DataInterface::GetSingleton();
+  static HexStampedTrans final_trans;
 
   // align
   // --- test --- //
@@ -208,12 +202,14 @@ const HexTransStamped& PcdLocalization::NdtAlignment(
       new pcl::PointCloud<pcl::PointXYZ>());
   ndt_register_.align(*align_pcd, init_guess.matrix());
   const auto align_end_time = std::chrono::system_clock::now();
-  std::cout << "align time: "
-            << std::chrono::duration_cast<std::chrono::microseconds>(
-                   align_end_time - align_start_time)
-                       .count() /
-                   1000.0
-            << "ms" << std::endl;
+  double align_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                          align_end_time - align_start_time)
+                          .count() /
+                      1000.0;
+  if (align_time > 100.0) {
+    data_interface.Log(HexLogLevel::kError,
+                       "### NDT Align Time Too Long: %f ms ###", align_time);
+  }
 
   // check
   bool ndt_success = ndt_register_.hasConverged();
@@ -221,20 +217,22 @@ const HexTransStamped& PcdLocalization::NdtAlignment(
   ndt_result.matrix() = ndt_register_.getFinalTransformation();
   if (ndt_success) {
     // final_trans = AffineToHexTrans(ndt_result, valid_time);
-    final_trans = AffineToHexTrans(ndt_result, valid_time);
+    final_trans.time = valid_time;
+    final_trans.transform = ndt_result;
   } else {
-    final_trans = AffineToHexTrans(init_guess, 0.0);
+    final_trans.time = HexStamp();
+    final_trans.transform = init_guess;
   }
 
   return final_trans;
 }
 
-// const HexTransStamped& PcdLocalization::DoubleIcpAlignment(
+// const HexStampedTrans& PcdLocalization::DoubleIcpAlignment(
 //     const Eigen::Affine3f& init_guess,
 //     const pcl::PointCloud<pcl::PointXYZ>::Ptr& target_points,
 //     const pcl::PointCloud<pcl::PointXYZ>::Ptr& source_points,
 //     double valid_time) {
-//   static HexTransStamped fine_result;
+//   static HexStampedTrans fine_result;
 //   static pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ>
 //   icp_register; icp_register.setMaximumIterations(20);
 //   pcl::PointCloud<pcl::PointXYZ>::Ptr align_pcd(
@@ -311,8 +309,8 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr PcdLocalization::CropPointsBox(
 }
 
 pcl::PointCloud<pcl::PointXYZ>::Ptr PcdLocalization::CropPointsCylinder(
-    const pcl::PointCloud<pcl::PointXYZ>::Ptr& raw_pcd, double range_min,
-    double range_max, double angle_min, double angle_max) {
+    const pcl::PointCloud<pcl::PointXYZ>::Ptr& raw_pcd, double distance_min,
+    double distance_max, double angle_min, double angle_max) {
   static pcl::PointCloud<pcl::PointXYZ>::Ptr cropped_points(
       new pcl::PointCloud<pcl::PointXYZ>());
   cropped_points->clear();
@@ -320,35 +318,16 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr PcdLocalization::CropPointsCylinder(
   for (pcl::PointCloud<pcl::PointXYZ>::const_iterator it = raw_pcd->begin();
        it != raw_pcd->end(); it++) {
     const pcl::PointXYZ& point = *it;
-    double range_square = point.x * point.x + point.y * point.y;
+    double distance_square = point.x * point.x + point.y * point.y;
     double angle = atan2(point.y, point.x);
-    if (range_square < range_max * range_max &&
-        range_square > range_min * range_min && angle < angle_max &&
+    if (distance_square < distance_max * distance_max &&
+        distance_square > distance_min * distance_min && angle < angle_max &&
         angle > angle_min) {
       cropped_points->points.push_back(point);
     }
   }
 
   return cropped_points;
-}
-
-Eigen::Affine3f PcdLocalization::HexTransToAffine(
-    const HexTransStamped& hex_trans) {
-  Eigen::Affine3f affine(Eigen::Affine3f::Identity());
-  affine.matrix().block<3, 3>(0, 0) = hex_trans.orientation.toRotationMatrix();
-  affine.matrix().block<3, 1>(0, 3) = hex_trans.translation;
-
-  return affine;
-}
-
-HexTransStamped PcdLocalization::AffineToHexTrans(const Eigen::Affine3f& affine,
-                                                  double time) {
-  HexTransStamped hex_trans;
-  hex_trans.time = time;
-  hex_trans.translation = affine.matrix().block<3, 1>(0, 3);
-  hex_trans.orientation = Eigen::Quaternionf(affine.matrix().block<3, 3>(0, 0));
-
-  return hex_trans;
 }
 
 }  // namespace localization

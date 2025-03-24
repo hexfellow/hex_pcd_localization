@@ -1,13 +1,12 @@
 /****************************************************************
- * Copyright 2023 Dong Zhaorui. All rights reserved.
+ * Copyright 2025 Dong Zhaorui. All rights reserved.
  * Author : Dong Zhaorui 847235539@qq.com
- * Date   : 2023-08-29
+ * Date   : 2025-03-14
  ****************************************************************/
 
-#ifndef PCD_LOCALIZATION_PCD_LOCALIZATION_H_
-#define PCD_LOCALIZATION_PCD_LOCALIZATION_H_
+#ifndef HEX_PCD_LOCALIZATION_PCD_LOCALIZATION_H_
+#define HEX_PCD_LOCALIZATION_PCD_LOCALIZATION_H_
 
-#include <pcd_localization/hex_utility.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/registration/icp.h>
@@ -18,8 +17,16 @@
 #include <string>
 #include <vector>
 
-using hex::utility::HexPointsStamped;
-using hex::utility::HexTransStamped;
+#include "hex_pcd_localization/hex_utility.h"
+
+using hex::utility::HexParametersFlag;
+using hex::utility::HexParametersFrame;
+using hex::utility::HexParametersNdt;
+using hex::utility::HexParametersSource;
+using hex::utility::HexParametersTarget;
+using hex::utility::HexStamp;
+using hex::utility::HexStampedPoints;
+using hex::utility::HexStampedTrans;
 
 namespace hex {
 namespace localization {
@@ -28,7 +35,7 @@ enum class SystemState { kMove = 0, kStart, kFinish, kCharge };
 
 class PcdLocalization {
  public:
-  static PcdLocalization& GetPcdLocalization() {
+  static PcdLocalization& GetSingleton() {
     static PcdLocalization singleton;
     return singleton;
   }
@@ -43,15 +50,15 @@ class PcdLocalization {
 
   // Work Handle
   void UpdateTarget();
-  const HexTransStamped& PointsAlignment(const Eigen::Affine3f&,
-                                         const HexPointsStamped&);
-  void ResultProcess(const HexTransStamped&, const Eigen::Affine3f&);
+  const HexStampedTrans& PointsAlignment(const Eigen::Affine3f&,
+                                         const HexStampedPoints&);
+  void ResultProcess(const HexStampedTrans&, const Eigen::Affine3f&);
 
   // Help Handle
-  const HexTransStamped& NdtAlignment(
+  const HexStampedTrans& NdtAlignment(
       const Eigen::Affine3f&, const pcl::PointCloud<pcl::PointXYZ>::Ptr&,
-      double);
-  // const HexTransStamped& DoubleIcpAlignment(
+      HexStamp);
+  // const HexStampedTrans& DoubleIcpAlignment(
   //     const Eigen::Affine3f&, const pcl::PointCloud<pcl::PointXYZ>::Ptr&,
   //     const pcl::PointCloud<pcl::PointXYZ>::Ptr&, double);
   pcl::PointCloud<pcl::PointXYZ>::Ptr DownSample(
@@ -62,34 +69,22 @@ class PcdLocalization {
   pcl::PointCloud<pcl::PointXYZ>::Ptr CropPointsCylinder(
       const pcl::PointCloud<pcl::PointXYZ>::Ptr&, double, double, double,
       double);
-  Eigen::Affine3f HexTransToAffine(const HexTransStamped&);
-  HexTransStamped AffineToHexTrans(const Eigen::Affine3f&, double);
 
-  // Parameter
-  std::string kmap_frame_;
-  std::string kodom_frame_;
-  double ktarget_voxel_size_;
-  double ktarget_pcd_size_;
-  double ktarget_update_distance_;
-  double ksource_voxel_size_;
-  double ksource_max_range_;
-  double ksource_min_range_;
-  double ksource_max_angle_;
-  double ksource_min_angle_;
-  double kndt_trans_epsilon_;
-  double kndt_step_size_;
-  double kndt_resolution_;
-  int32_t kndt_max_iterations_;
-  bool kmode_pure_lidar_;
+  // Parameters
+  HexParametersFlag kparameters_flag_;
+  HexParametersFrame kparameters_frame_;
+  HexParametersNdt kparameters_ndt_;
+  HexParametersSource kparameters_source_;
+  HexParametersTarget kparameters_target_;
 
-  // Variable
+  // Variables
   bool start_flag_;
   Eigen::Vector3f map_center_;
   Eigen::Affine3f last_trans_;
   Eigen::Affine3f delta_trans_;
-  Eigen::Affine3f map_to_sensor_;
-  Eigen::Affine3f map_to_odom_;
-  Eigen::Affine3f rough_map_to_sensor_;
+  Eigen::Affine3f sensor_in_map_;
+  Eigen::Affine3f odom_in_map_;
+  Eigen::Affine3f rough_sensor_in_map_;
   pcl::PointCloud<pcl::PointXYZ>::Ptr map_points_;
   pcl::NormalDistributionsTransform<pcl::PointXYZ, pcl::PointXYZ> ndt_register_;
 };
@@ -97,4 +92,4 @@ class PcdLocalization {
 }  // namespace localization
 }  // namespace hex
 
-#endif  // PCD_LOCALIZATION_PCD_LOCALIZATION_H_
+#endif  // HEX_PCD_LOCALIZATION_PCD_LOCALIZATION_H_

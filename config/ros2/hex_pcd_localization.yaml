@@ -1,0 +1,3 @@
+hex_pcd_localization:
+  ros__parameters:
+    out_string: "world"

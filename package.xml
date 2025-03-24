@@ -1,0 +1,56 @@
+<?xml version="1.0"?>
+<package format="3">
+    <name>hex_pcd_localization</name>
+    <version>0.0.0</version>
+    <description>The hex_pcd_localization package</description>
+    <maintainer email="847235539@qq.com">blank</maintainer>
+    <license>GPL-3.0 license</license>
+
+    <!-- ros1 -->
+    <buildtool_depend condition="$ROS_VERSION == 1">catkin</buildtool_depend>
+
+    <build_depend condition="$ROS_VERSION == 1">roscpp</build_depend>
+    <build_depend condition="$ROS_VERSION == 1">std_msgs</build_depend>
+    <build_depend condition="$ROS_VERSION == 1">nav_msgs</build_depend>
+    <build_depend condition="$ROS_VERSION == 1">sensor_msgs</build_depend>
+    <build_depend condition="$ROS_VERSION == 1">geometry_msgs</build_depend>
+    <build_depend condition="$ROS_VERSION == 1">tf2</build_depend>
+    <build_depend condition="$ROS_VERSION == 1">tf2_ros</build_depend>
+    <build_depend condition="$ROS_VERSION == 1">tf2_geometry_msgs</build_depend>
+    <build_depend condition="$ROS_VERSION == 1">pcl_ros</build_depend>
+    <build_depend condition="$ROS_VERSION == 1">pcl_conversions</build_depend>
+
+    <build_export_depend condition="$ROS_VERSION == 1">roscpp</build_export_depend>
+    <build_export_depend condition="$ROS_VERSION == 1">std_msgs</build_export_depend>
+    <build_export_depend condition="$ROS_VERSION == 1">nav_msgs</build_export_depend>
+    <build_export_depend condition="$ROS_VERSION == 1">sensor_msgs</build_export_depend>
+    <build_export_depend condition="$ROS_VERSION == 1">geometry_msgs</build_export_depend>
+    <build_export_depend condition="$ROS_VERSION == 1">tf2</build_export_depend>
+    <build_export_depend condition="$ROS_VERSION == 1">tf2_ros</build_export_depend>
+    <build_export_depend condition="$ROS_VERSION == 1">tf2_geometry_msgs</build_export_depend>
+    <build_export_depend condition="$ROS_VERSION == 1">pcl_ros</build_export_depend>
+    <build_export_depend condition="$ROS_VERSION == 1">pcl_conversions</build_export_depend>
+
+    <exec_depend condition="$ROS_VERSION == 1">roscpp</exec_depend>
+    <exec_depend condition="$ROS_VERSION == 1">std_msgs</exec_depend>
+    <exec_depend condition="$ROS_VERSION == 1">nav_msgs</exec_depend>
+    <exec_depend condition="$ROS_VERSION == 1">sensor_msgs</exec_depend>
+    <exec_depend condition="$ROS_VERSION == 1">geometry_msgs</exec_depend>
+    <exec_depend condition="$ROS_VERSION == 1">tf2</exec_depend>
+    <exec_depend condition="$ROS_VERSION == 1">tf2_ros</exec_depend>
+    <exec_depend condition="$ROS_VERSION == 1">tf2_geometry_msgs</exec_depend>
+    <exec_depend condition="$ROS_VERSION == 1">pcl_ros</exec_depend>
+    <exec_depend condition="$ROS_VERSION == 1">pcl_conversions</exec_depend>
+
+    <!-- ros2 --> 
+    <!-- wait -->
+    <buildtool_depend condition="$ROS_VERSION == 2">ament_cmake</buildtool_depend>
+
+    <depend condition="$ROS_VERSION == 2">rclcpp</depend>
+    <depend condition="$ROS_VERSION == 2">std_msgs</depend>
+
+    <export>
+        <build_type condition="$ROS_VERSION == 2">ament_cmake</build_type>
+    </export>
+
+</package>
